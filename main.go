@@ -69,12 +69,12 @@ type Request struct {
 	WorkspaceID  string
 }
 
-func usercode(ctx context.Context, data map[string]any) error {
-	fmt.Println("data >", data)
-	if data["graph_maker_req"] == nil {
+func usercode(ctx context.Context, data1 map[string]any) error {
+	fmt.Println("data >", data1)
+	if data1["graph_maker_req"] == nil {
 		return fmt.Errorf("no graph_maker field")
 	}
-	gmReq := data["graph_maker_req"].(map[string]any)
+	gmReq := data1["graph_maker_req"].(map[string]any)
 	if gmReq["open_api_key"] == nil {
 		return fmt.Errorf("no open_api_key field")
 	}
@@ -96,12 +96,12 @@ func usercode(ctx context.Context, data map[string]any) error {
 	if gmReq["workspace_id"] == nil {
 		return fmt.Errorf("no workspace_id field")
 	}
-	if data["ref"] == nil {
+	if gmReq["ref"] == nil {
 		return fmt.Errorf("no ref field")
 	}
 
 	req := Request{
-		Ref:         data["ref"].(string),
+		Ref:         gmReq["ref"].(string),
 		OpenAPIKey:  gmReq["open_api_key"].(string),
 		SystemMsg:   gmReq["system_msg"].(string),
 		UserMsg:     gmReq["user_msg"].(string),
@@ -130,7 +130,7 @@ func usercode(ctx context.Context, data map[string]any) error {
 	if err != nil {
 		return fmt.Errorf("failed to unmarshal graph JSON: %v", err)
 	}
-	data["graph_maker_rsp"] = graphMap
+	data1["graph_maker_rsp"] = graphMap
 
 	return nil
 }
