@@ -10,6 +10,7 @@ import (
 	"github.com/openai/openai-go/option"
 	"graph_maker/controlapi"
 	"net/url"
+	"strconv"
 	"sync"
 )
 
@@ -113,8 +114,12 @@ func usercode(ctx context.Context, data1 map[string]any) error {
 		req.EventActorID = id
 	}
 	users := gmReq["users"].([]any)
-	for _, u := range users {
-		req.Users = append(req.Users, int(u.(float64)))
+	for _, uBin := range users {
+		u, err := strconv.Atoi(uBin.(string))
+		if err != nil {
+			return fmt.Errorf("failed to parse user ID: %v", err)
+		}
+		req.Users = append(req.Users, u)
 	}
 
 	initOnce(req)
