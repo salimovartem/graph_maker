@@ -10,7 +10,9 @@ import (
 	"github.com/openai/openai-go/option"
 	"graph_maker/controlapi"
 	"net/url"
+	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -71,6 +73,15 @@ type Request struct {
 }
 
 func usercode(ctx context.Context, data1 map[string]any) error {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println(r)
+			stack := StackTrace()
+			err := fmt.Errorf("panic: %v %s", r, stack)
+			panic(err)
+
+		}
+	}()
 	fmt.Println("data >", data1)
 	if data1["graph_maker_req"] == nil {
 		return fmt.Errorf("no graph_maker field")
@@ -317,4 +328,35 @@ func splitIntoChunks(s string, size int) []string {
 	}
 	chunks = append(chunks, string(runes))
 	return chunks
+}
+
+func StackTrace() string {
+
+	var builder strings.Builder
+	pc := make([]uintptr, 10) // Увеличьте размер, если необходимо больше глубины стека.
+	n := runtime.Callers(3, pc)
+	if n == 0 {
+		return ""
+	}
+	pc = pc[:n]
+	frames := runtime.CallersFrames(pc)
+	for {
+		frame, more := frames.Next()
+		file := frame.File
+		f := frame.Function
+		fList := strings.Split(frame.Function, ".")
+		if len(fList) > 0 {
+			f = fList[len(fList)-1]
+		}
+		fileList := strings.Split(frame.File, "/")
+		if len(fileList) > 4 {
+			file = strings.Join(fileList[len(fileList)-4:], "/")
+		}
+		builder.WriteString(fmt.Sprintf("/%s:%d %s(); ", file, frame.Line, f))
+		if !more {
+			break
+		}
+	}
+
+	return builder.String()
 }
