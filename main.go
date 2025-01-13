@@ -183,13 +183,18 @@ func handle(ctx context.Context, req Request) Graph {
 	formsCustom := rspCustom["data"].([]any)
 	for _, form1 := range formsCustom {
 		form := form1.(map[string]any)
-		if form["title"].(string) == "GraphMakerForm" {
+		if form["title"].(string) == "GraphMakerForm." {
 			req.FormID = int(form["id"].(float64))
 			break
 		}
 	}
 	if req.FormID == 0 {
-		req.FormID = controlapi.CreateTemplate(req.WorkspaceID, "GraphMakerForm", []map[string]any{})
+		req.FormID = controlapi.CreateTemplate(req.WorkspaceID, "GraphMakerForm.", []map[string]any{})
+		for _, userID := range req.Users {
+			controlapi.AddAccess("formTemplate", req.FormID, userID)
+			controlapi.AddAccess("templateActors", req.FormID, userID)
+		}
+
 	}
 
 	linksType := controlapi.GetTypeLinks(req.WorkspaceID)
