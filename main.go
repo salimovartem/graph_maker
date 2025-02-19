@@ -273,10 +273,12 @@ func usercode(ctx context.Context, data1 map[string]any) error {
 	}
 
 	fmt.Println(string(result))
+
 	data1["structured_output_rsp"] = map[string]any{
-		"schema": string(result),
+		"schema": finalSchema,
 		"status": "ok",
 	}
+
 	return nil
 }
 
