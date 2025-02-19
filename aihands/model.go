@@ -1,4 +1,4 @@
-package controlapi
+package aihands
 
 type Actor struct {
 	Id       string  `json:"id"`

@@ -8,7 +8,7 @@ import (
 	"github.com/invopop/jsonschema"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
-	"graph_maker/controlapi"
+	"graph_maker/aihands"
 	"net/url"
 	"runtime"
 	"strconv"
@@ -72,7 +72,215 @@ type Request struct {
 	WorkspaceID  string
 }
 
+type Section struct {
+	Title   string    `json:"title"`
+	Content []Content `json:"content"`
+}
+
+type ExtraValue struct {
+	ID string `json:"id"`
+}
+type ExtraOptionsSource struct {
+	Type  string     `json:"type"`
+	Value ExtraValue `json:"value"`
+}
+type Extra struct {
+	OptionsSource *ExtraOptionsSource `json:"optionsSource,omitempty"`
+}
+
+type Form struct {
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	Sections    []Section `json:"sections"`
+}
+
+// Content представляет структуру входного JSON элемента
+type Content struct {
+	ID           string      `json:"id"`
+	Class        string      `json:"class"`
+	Title        string      `json:"title"`
+	Value        interface{} `json:"value,omitempty"`
+	Options      []Option    `json:"options,omitempty"`
+	Visibility   string      `json:"visibility,omitempty"`
+	Key          string      `json:"key,omitempty"`
+	IDNotChanged bool        `json:"idNotChanged,omitempty"`
+	Required     bool        `json:"required,omitempty"`
+	Extra        *Extra      `json:"extra,omitempty"`
+}
+
+// Option представляет структуру опции
+type Option struct {
+	Title string `json:"title"`
+	Value string `json:"value"`
+}
+
+type OneOf struct {
+	Const string `json:"const"`
+	Title string `json:"title"`
+}
+
+// SchemaProperty представляет свойство JSON Schema
+type SchemaProperty struct {
+	Type        string                    `json:"type"`
+	Description string                    `json:"description,omitempty"`
+	Properties  map[string]SchemaProperty `json:"properties,omitempty"`
+	Required    []string                  `json:"required,omitempty"`
+	Enum        *[]string                 `json:"enum,omitempty"`
+	OneOf       *[]OneOf                  `json:"oneOf,omitempty"`
+}
+
+func convertToJSONSchema(f Form) (map[string]SchemaProperty, error) {
+	properties := make(map[string]SchemaProperty)
+	for _, section := range f.Sections {
+		sectionTitle := section.Title
+		for _, item := range section.Content {
+			var schema SchemaProperty
+			if item.Visibility == "disabled" {
+				continue
+			}
+			switch {
+			case item.Class == "edit":
+				schema = SchemaProperty{
+					Type:        "string",
+					Description: "Section: " + sectionTitle + ", field: " + item.Title,
+				}
+
+			case item.Class == "calendar":
+				schema = SchemaProperty{
+					Type: "object",
+					Properties: map[string]SchemaProperty{
+						"startDate": {
+							Type:        "integer",
+							Description: "Date and time in unixtime",
+						},
+						"endDate": {
+							Type:        "integer",
+							Description: "Date and time in unixtime",
+						},
+						"timeZoneOffset": {
+							Type:        "integer",
+							Description: "time Zone Offset",
+						},
+						"sendInvite": {
+							Type:        "boolean",
+							Description: "always false",
+						},
+					},
+					Required: []string{
+						"startDate",
+						"endDate",
+						"timeZoneOffset",
+						"sendInvite",
+					},
+				}
+			case item.Class == "select" || item.Class == "multiSelect":
+				var oneOf1 *[]OneOf
+				var enum1 *[]string
+				if item.Options != nil && len(item.Options) > 0 {
+					enum := make([]string, 0, len(item.Options))
+					oneOf := make([]OneOf, 0, len(item.Options))
+					for _, option := range item.Options {
+						enum = append(enum, option.Value)
+						oneOf = append(oneOf, OneOf{
+							Const: option.Value,
+							Title: option.Title,
+						})
+					}
+					if len(enum) > 0 {
+						enum1 = &enum
+					}
+					if len(oneOf) > 0 {
+						oneOf1 = &oneOf
+					}
+				} else if item.Extra != nil && item.Extra.OptionsSource != nil {
+					switch item.Extra.OptionsSource.Type {
+					case "actorFilter":
+						if item.Extra.OptionsSource.Value.ID != "" {
+
+						}
+					default:
+						panic(fmt.Sprintf("Unknown extra options source type: %s", item.Extra.OptionsSource.Type))
+					}
+
+				}
+
+				schema = SchemaProperty{
+					Type:        "string",
+					Description: "Section: " + sectionTitle + ", field: " + item.Title,
+					Enum:        enum1,
+					OneOf:       oneOf1,
+				}
+			case item.Class == "check":
+				schema = SchemaProperty{
+					Type:        "boolean",
+					Description: "Section: " + sectionTitle + ", field: " + item.Title,
+				}
+			case item.Class == "upload":
+				continue
+			default:
+				panic(fmt.Sprintf("Unknown item class: %s", item.Class))
+			}
+
+			// Используем ID элемента как ключ в схеме
+			if item.ID != "" {
+				properties[item.ID] = schema
+			}
+		}
+	}
+
+	return properties, nil
+}
+
 func usercode(ctx context.Context, data1 map[string]any) error {
+	so, ok := data1["structured_output_req"].(map[string]any)
+	if so == nil || ok {
+		fmt.Println("no structured_output")
+		return fmt.Errorf("no structured_output")
+	}
+	formJSON, ok := so["forms"].(map[string]any)
+	if formJSON == nil || ok {
+		fmt.Println("no structured_output.forms")
+		return fmt.Errorf("no structured_output.forms")
+	}
+	formBin, err := json.Marshal(formJSON)
+
+	var f Form
+	if err := json.Unmarshal(formBin, &f); err != nil {
+		fmt.Printf("Error1 unmarshaling input JSON: %v\n", err)
+		return fmt.Errorf("error1 unmarshaling input JSON: %w", err)
+	}
+
+	schema, err := convertToJSONSchema(f)
+	if err != nil {
+		fmt.Printf("Error converting to JSON Schema: %v\n", err)
+		return fmt.Errorf("error converting to JSON Schema: %w", err)
+	}
+
+	// Создаем финальную структуру схемы
+	finalSchema := map[string]interface{}{
+		"$schema":              "https://json-schema.org/draft/2020-12/schema",
+		"type":                 "object",
+		"additionalProperties": false,
+		"name":                 "structured_output",
+		"properties":           schema,
+	}
+
+	// Преобразуем схему обратно в JSON
+	result, err := json.MarshalIndent(finalSchema, "", "    ")
+	if err != nil {
+		fmt.Printf("Error marshaling result: %v\n", err)
+		return fmt.Errorf("error marshaling result: %w", err)
+	}
+
+	fmt.Println(string(result))
+	data1["structured_output_rsp"] = map[string]any{
+		"schema": string(result),
+		"status": "ok",
+	}
+	return nil
+}
+
+func usercode1(ctx context.Context, data1 map[string]any) error {
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Println(r)
@@ -154,13 +362,13 @@ func usercode(ctx context.Context, data1 map[string]any) error {
 func initOnce(req Request) {
 	once.Do(func() {
 
-		controlapi.Token = req.SimAPIKey
+		aihands.Token = req.SimAPIKey
 		client = openai.NewClient(option.WithAPIKey(req.OpenAPIKey))
 	})
 }
 
 func handle(ctx context.Context, req Request) Graph {
-	rsp := controlapi.SystemForms(req.WorkspaceID)
+	rsp := aihands.SystemForms(req.WorkspaceID)
 	if rsp["data"] == nil {
 		panic("no forms")
 	}
@@ -176,7 +384,7 @@ func handle(ctx context.Context, req Request) Graph {
 			continue
 		}
 	}
-	rspCustom := controlapi.CustomForms(req.WorkspaceID)
+	rspCustom := aihands.CustomForms(req.WorkspaceID)
 	if rspCustom["data"] == nil {
 		panic("no custom forms")
 	}
@@ -189,15 +397,15 @@ func handle(ctx context.Context, req Request) Graph {
 		}
 	}
 	if req.FormID == 0 {
-		req.FormID = controlapi.CreateTemplate(req.WorkspaceID, "GraphMakerForm.", []map[string]any{})
+		req.FormID = aihands.CreateTemplate(req.WorkspaceID, "GraphMakerForm.", []map[string]any{})
 		for _, userID := range req.Users {
-			controlapi.AddAccess("formTemplate", req.FormID, userID)
-			controlapi.AddAccess("templateActors", req.FormID, userID)
+			aihands.AddAccess("formTemplate", req.FormID, userID)
+			aihands.AddAccess("templateActors", req.FormID, userID)
 		}
 
 	}
 
-	linksType := controlapi.GetTypeLinks(req.WorkspaceID)
+	linksType := aihands.GetTypeLinks(req.WorkspaceID)
 	if linksType["data"] == nil {
 		panic("no links")
 	}
@@ -259,7 +467,7 @@ func handle(ctx context.Context, req Request) Graph {
 		if req.EventActorID != "" {
 			linkToGraph :=
 				fmt.Sprintf("https://sim.simulator.company/actors_graph/%s/graph/%s/layers/%s", req.WorkspaceID, gid, lid)
-			controlapi.CreateComment(req.EventActorID, "The graph is created based on the event content:\r\n"+linkToGraph)
+			aihands.CreateComment(req.EventActorID, "The graph is created based on the event content:\r\n"+linkToGraph)
 		}
 		return graph
 
@@ -277,14 +485,14 @@ var linksRefs = make(map[string]Info)
 var linkLLMID = make(map[string]string)
 
 func prepareGraph(req Request) (string, string) {
-	gid := controlapi.CreateActor("", req.Ref, req.GraphFormID, map[string]any{}, nil, nil, "")
+	gid := aihands.CreateActor("", req.Ref, req.GraphFormID, map[string]any{}, nil, nil, "")
 	for _, userID := range req.Users {
-		controlapi.AddAccessString("actor", gid, userID)
+		aihands.AddAccessString("actor", gid, userID)
 	}
-	lid := controlapi.CreateLayerActor("Layer", req.LayerFormID)
-	controlapi.CreateLink(req.LinkType, req.WorkspaceID, gid, lid)
+	lid := aihands.CreateLayerActor("Layer", req.LayerFormID)
+	aihands.CreateLink(req.LinkType, req.WorkspaceID, gid, lid)
 	for _, userID := range req.Users {
-		controlapi.AddAccessString("actor", lid, userID)
+		aihands.AddAccessString("actor", lid, userID)
 	}
 	return gid, lid
 
@@ -300,17 +508,17 @@ func makeGraph(lid string, req Request, graph Graph) {
 		//	linkLLMID[n.ID] = ref
 		//	continue
 		//}
-		id := controlapi.CreateActor(ref, n.Name, req.FormID, map[string]any{}, nil, nil, "")
-		laID := controlapi.AddToLayer("node", id, lid, n.X, n.Y)
+		id := aihands.CreateActor(ref, n.Name, req.FormID, map[string]any{}, nil, nil, "")
+		laID := aihands.AddToLayer("node", id, lid, n.X, n.Y)
 		linkLLMID[n.ID] = ref
 		linksRefs[ref] = Info{laID: laID, id: id}
 
 	}
 	for _, e := range graph.Edges {
 
-		id := controlapi.CreateLink(req.LinkType, req.WorkspaceID, getActor(e.Source).id, getActor(e.Target).id)
+		id := aihands.CreateLink(req.LinkType, req.WorkspaceID, getActor(e.Source).id, getActor(e.Target).id)
 		fmt.Println(getActor(e.Source), getActor(e.Target), id)
-		controlapi.AddToLayer1("edge", id, lid, getActor(e.Source).laID, getActor(e.Target).laID)
+		aihands.AddToLayer1("edge", id, lid, getActor(e.Source).laID, getActor(e.Target).laID)
 	}
 
 }
