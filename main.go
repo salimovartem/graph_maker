@@ -233,12 +233,12 @@ func convertToJSONSchema(f Form) (map[string]SchemaProperty, error) {
 
 func usercode(ctx context.Context, data1 map[string]any) error {
 	so, ok := data1["structured_output_req"].(map[string]any)
-	if so == nil || ok {
+	if so == nil || !ok {
 		fmt.Println("no structured_output")
 		return fmt.Errorf("no structured_output")
 	}
 	formJSON, ok := so["forms"].(map[string]any)
-	if formJSON == nil || ok {
+	if formJSON == nil || !ok {
 		fmt.Println("no structured_output.forms")
 		return fmt.Errorf("no structured_output.forms")
 	}
